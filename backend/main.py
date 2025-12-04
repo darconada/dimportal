@@ -13,9 +13,11 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import FastAPI, HTTPException, Query, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.responses import FileResponse
 from starlette.staticfiles import StaticFiles
+import json
 from ldap3 import Server, Connection, Tls, SUBTREE
 from dotenv import load_dotenv
 from pathlib import Path
@@ -67,7 +69,11 @@ if not FERNET_KEY:
     FERNET_KEY = Fernet.generate_key().decode()
 fernet = Fernet(FERNET_KEY.encode())
 
-app = FastAPI(title="Portal DIM API")
+class PrettyJSONResponse(JSONResponse):
+    def render(self, content) -> bytes:
+        return json.dumps(content, ensure_ascii=False, indent=2).encode("utf-8")
+
+app = FastAPI(title="Portal DIM API", default_response_class=PrettyJSONResponse)
 
 app.add_middleware(
     SessionMiddleware,
@@ -2670,11 +2676,22 @@ def _load_api_keys():
             logger.warning(f"No se pudieron cargar API keys: {e}")
 
 def _save_api_keys():
-    """Guarda API keys en archivo JSON."""
+    """Guarda API keys en archivo JSON de forma atómica."""
     import json
+    import tempfile
+    logger.info(f"Guardando {len(API_KEYS)} API keys en {API_KEYS_FILE}")
     try:
-        with open(API_KEYS_FILE, "w") as f:
-            json.dump(API_KEYS, f, indent=2)
+        # Escribir a archivo temporal primero, luego renombrar (atómico)
+        fd, tmp_path = tempfile.mkstemp(dir=API_KEYS_FILE.parent, suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w") as f:
+                json.dump(API_KEYS, f, indent=2)
+            os.replace(tmp_path, API_KEYS_FILE)
+            logger.info(f"API keys guardadas correctamente")
+        except Exception as e:
+            logger.error(f"Error escribiendo archivo temporal: {e}")
+            os.unlink(tmp_path)
+            raise
     except Exception as e:
         logger.error(f"No se pudieron guardar API keys: {e}")
 
@@ -2724,10 +2741,14 @@ async def generate_api_key(request: Request, username: str = Depends(require_ses
     new_key = f"dim_{secrets.token_urlsafe(32)}"
 
     # Almacenar con credenciales ndcli encriptadas
+    enc_pwd = session_data.get("password")
+    # Convertir bytes a string para poder serializar a JSON
+    if isinstance(enc_pwd, bytes):
+        enc_pwd = enc_pwd.decode("utf-8")
     API_KEYS[new_key] = {
         "username": username,
         "ndcli_user": session_data.get("user"),
-        "ndcli_password": session_data.get("password"),  # Ya encriptado
+        "ndcli_password": enc_pwd,
         "created": datetime.now(timezone.utc).isoformat(),
         "name": key_name,
     }
