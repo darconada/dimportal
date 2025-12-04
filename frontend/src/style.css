@@ -1,0 +1,21 @@
+:root {
+  font-family: "Times New Roman", Georgia, serif;
+  color-scheme: light dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-size: 16px;
+  line-height: 1.4;
+}
+
+button,
+input,
+select {
+  font-family: inherit;
+  font-size: inherit;
+}

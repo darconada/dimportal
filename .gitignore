@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+
+# Node
+node_modules/
+frontend/dist/
+
+# Environment
+.env
+backend/.env
+
+# Logs
+logs/
+*.log
+backend/uvicorn.out
+
+# IDE
+.idea/
+.vscode/
+*.swp

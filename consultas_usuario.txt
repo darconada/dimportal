@@ -1,0 +1,12 @@
+Consultas registradas en este proyecto (orden cronológico resumido):
+
+1) Checkpoint solicitado del estado actual del portal antes de añadir nuevas funcionalidades.
+2) Añadir menú desplegable en Networks/Subnets (Consultas ACS) al hacer click en cada subred con opciones: “Listar todas las IPs”, “Listar IPs libres”, “Listar IPs en uso”.
+3) Filtrar resultados de subred en ACS para que sólo se muestren pools que contengan “acs”.
+4) Lógica “Listar todas las IPs”: usar ndcli list ips <subred> status all layer3domain <l3d> -L 256 y mostrar tabla IP/Estado/DNS/Comentario/Acciones.
+5) Lógica “Listar IPs libres”: ndcli list ips <subred> status free layer3domain <l3d> -L 256 (acciones: Reservar).
+6) Lógica “Listar IPs en uso”: ndcli list ips <subred> status used layer3domain <l3d> -L 256 (acciones: Editar, Liberar).
+7) Añadir paginación y selector de filas (10/50/100/Todas) y buscador de texto en la tabla de IPs del modal.
+8) Mostrar en el modal de IPs la subnet, layer3domain y el pool de la subred.
+9) Implementar UI de reserva de IP: radio “Crear DNS” (Sí/No), campo Entrada DNS (validar que termine en punto), Vista (Default o Interna/Pública/Interna/Pública si es arsyscloud.tools), Comentario, botones Reservar/Cancelar.
+10) Lógica solicitada para reservar sin crear DNS: si hay comentario, ejecutar ndcli modify pool <POOL> mark ip <IP> comment:"<COMMENT>"; si no hay comentario, ejecutar ndcli modify pool <POOL> mark ip <IP>.
