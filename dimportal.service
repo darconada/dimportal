@@ -1,0 +1,16 @@
+[Unit]
+Description=Portal DIM (FastAPI / Uvicorn)
+After=network.target
+
+[Service]
+User=isantolaya@arsyslan.es
+WorkingDirectory=/home/isantolaya@arsyslan.es/dimportal/backend
+Environment="PATH=/home/isantolaya@arsyslan.es/dimportal/backend/.venv/bin:/usr/bin:/bin"
+ExecStart=/home/isantolaya@arsyslan.es/dimportal/backend/.venv/bin/uvicorn main:app --host 0.0.0.0 --port 4500
+Restart=always
+RestartSec=5
+StandardOutput=append:/home/isantolaya@arsyslan.es/dimportal/backend/logs/systemd.out
+StandardError=append:/home/isantolaya@arsyslan.es/dimportal/backend/logs/systemd.err
+
+[Install]
+WantedBy=multi-user.target

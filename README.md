@@ -51,12 +51,19 @@ npm run build
 
 ## Ejecucion
 
+El servicio se gestiona con systemd:
+
 ```bash
-cd backend
-./run.sh
+systemctl start dimportal     # Iniciar
+systemctl stop dimportal      # Parar
+systemctl restart dimportal   # Reiniciar
+systemctl status dimportal    # Ver estado
+journalctl -u dimportal -f    # Ver logs en tiempo real
 ```
 
-La aplicacion estara disponible en `http://localhost:4501`
+La aplicacion esta disponible en `http://10.22.6.24:4500`
+
+Logs en: `/home/isantolaya@arsyslan.es/dimportal/backend/logs/`
 
 ## API REST
 
@@ -85,7 +92,7 @@ Usar header `X-API-Key` con una clave generada desde la interfaz web (pestana AP
 ### Ejemplo
 
 ```bash
-curl -H "X-API-Key: dim_xxx..." "http://localhost:4501/api/v1/acs/ip/10.140.16.10"
+curl -H "X-API-Key: dim_xxx..." "http://10.22.6.24:4500/api/v1/acs/ip/10.140.16.10"
 ```
 
 ## Estructura
@@ -104,13 +111,3 @@ dimportal/
 │       └── api.js       # Cliente API
 └── CLAUDE.md            # Guia para Claude Code
 ```
-
-## Desarrollo
-
-Frontend con hot-reload:
-```bash
-cd frontend
-npm run dev
-```
-
-El servidor de desarrollo corre en `:5174` y hace proxy a `:4501`.
