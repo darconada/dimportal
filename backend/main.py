@@ -2650,6 +2650,313 @@ async def dns_bulk_delete_execute(payload: dict, _: str = Depends(require_sessio
     return results
 
 
+# =============================================================================
+# API v1 - Endpoints RESTful para uso programático
+# =============================================================================
+
+# API Keys storage (en producción usar base de datos)
+API_KEYS: Dict[str, Dict[str, str]] = {}
+API_KEYS_FILE = Path(__file__).resolve().parent / "api_keys.json"
+
+def _load_api_keys():
+    """Carga API keys desde archivo JSON si existe."""
+    global API_KEYS
+    if API_KEYS_FILE.exists():
+        import json
+        try:
+            with open(API_KEYS_FILE, "r") as f:
+                API_KEYS = json.load(f)
+        except Exception as e:
+            logger.warning(f"No se pudieron cargar API keys: {e}")
+
+def _save_api_keys():
+    """Guarda API keys en archivo JSON."""
+    import json
+    try:
+        with open(API_KEYS_FILE, "w") as f:
+            json.dump(API_KEYS, f, indent=2)
+    except Exception as e:
+        logger.error(f"No se pudieron guardar API keys: {e}")
+
+_load_api_keys()
+
+
+def require_api_auth(request: Request):
+    """
+    Dependency que acepta autenticación por:
+    1. API Key en header X-API-Key
+    2. Cookie de sesión existente
+    """
+    # Intentar API Key primero
+    api_key = request.headers.get("X-API-Key")
+    if api_key:
+        if api_key not in API_KEYS:
+            raise HTTPException(status_code=401, detail="API Key inválida")
+        key_data = API_KEYS[api_key]
+        # Configurar credenciales ndcli desde la API key
+        set_ndcli_credentials(key_data.get("ndcli_user"), key_data.get("ndcli_password"))
+        return key_data.get("username", "api_user")
+
+    # Fallback a sesión de cookie
+    return require_session(request)
+
+
+@app.post("/api/v1/apikeys/generate")
+async def generate_api_key(request: Request, username: str = Depends(require_session)):
+    """
+    Genera una nueva API key para el usuario autenticado.
+    La API key hereda las credenciales ndcli de la sesión actual.
+    """
+    sid = request.session.get("sid")
+    session_data = SESSION_STORE.get(sid or "")
+    if not session_data:
+        raise HTTPException(status_code=401, detail="Sesión no válida")
+
+    # Obtener nombre opcional del body
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+    key_name = (body.get("name") or "").strip() or None
+
+    # Generar API key única
+    new_key = f"dim_{secrets.token_urlsafe(32)}"
+
+    # Almacenar con credenciales ndcli encriptadas
+    API_KEYS[new_key] = {
+        "username": username,
+        "ndcli_user": session_data.get("user"),
+        "ndcli_password": session_data.get("password"),  # Ya encriptado
+        "created": datetime.now(timezone.utc).isoformat(),
+        "name": key_name,
+    }
+    _save_api_keys()
+
+    return {"api_key": new_key, "username": username, "name": key_name}
+
+
+@app.get("/api/v1/apikeys")
+async def list_api_keys(request: Request, username: str = Depends(require_session)):
+    """Lista las API keys del usuario actual (sin mostrar las keys completas)."""
+    user_keys = []
+    for key, data in API_KEYS.items():
+        if data.get("username") == username:
+            user_keys.append({
+                "key_prefix": key[:12] + "...",
+                "created": data.get("created", "unknown"),
+                "name": data.get("name"),
+            })
+    return {"keys": user_keys}
+
+
+@app.delete("/api/v1/apikeys/{key_prefix}")
+async def revoke_api_key(key_prefix: str, request: Request, username: str = Depends(require_session)):
+    """Revoca una API key por su prefijo."""
+    # Buscar key que coincida con el prefijo
+    key_to_delete = None
+    for key, data in API_KEYS.items():
+        if key.startswith(key_prefix) and data.get("username") == username:
+            key_to_delete = key
+            break
+
+    if not key_to_delete:
+        raise HTTPException(status_code=404, detail="API Key no encontrada")
+
+    del API_KEYS[key_to_delete]
+    _save_api_keys()
+    return {"status": "revoked"}
+
+
+# --- ACS Endpoints ---
+
+@app.get("/api/v1/acs/pool/{pool_name}", response_model=List[ResultItem], tags=["ACS"])
+async def api_v1_acs_pool(pool_name: str, layer3domain: Optional[str] = None, _: str = Depends(require_api_auth)):
+    """
+    Busca información de un pool ACS por nombre.
+
+    - **pool_name**: Nombre del pool (ej: es-lgr-pl-acs-core-v4)
+    - **layer3domain**: (opcional) Forzar búsqueda en un layer3domain específico
+    """
+    try:
+        _validate_pool(pool_name)
+        l3d = ensure_l3d(layer3domain)
+        return search_across_domains("pool", pool_name, l3d)
+    except NdcliError as e:
+        raise HTTPException(status_code=502, detail=f"DIM error: {e.stderr or str(e)}")
+
+
+@app.get("/api/v1/acs/subnet/{cidr:path}", response_model=List[ResultItem], tags=["ACS"])
+async def api_v1_acs_subnet(cidr: str, layer3domain: Optional[str] = None, _: str = Depends(require_api_auth)):
+    """
+    Busca información de una subred en dominios ACS.
+
+    - **cidr**: CIDR completo (192.168.1.0/24) o parcial (192.168.1)
+    - **layer3domain**: (opcional) Forzar búsqueda en un layer3domain específico
+    """
+    try:
+        l3d = ensure_l3d(layer3domain)
+        return handle_subnet(cidr.strip(), l3d)
+    except NdcliError as e:
+        raise HTTPException(status_code=502, detail=f"DIM error: {e.stderr or str(e)}")
+
+
+@app.get("/api/v1/acs/vlan/{vlan_id}", response_model=List[ResultItem], tags=["ACS"])
+async def api_v1_acs_vlan(vlan_id: str, layer3domain: Optional[str] = None, _: str = Depends(require_api_auth)):
+    """
+    Busca pools ACS por número de VLAN.
+
+    - **vlan_id**: Número de VLAN (ej: 623)
+    - **layer3domain**: (opcional) Forzar búsqueda en un layer3domain específico
+    """
+    try:
+        if not VLAN_RE.match(vlan_id):
+            raise HTTPException(status_code=400, detail="VLAN inválida")
+        l3d = ensure_l3d(layer3domain)
+        return search_across_domains("vlan", vlan_id, l3d)
+    except NdcliError as e:
+        raise HTTPException(status_code=502, detail=f"DIM error: {e.stderr or str(e)}")
+
+
+@app.get("/api/v1/acs/dns/{fqdn:path}", response_model=List[ResultItem], tags=["ACS"])
+async def api_v1_acs_dns(fqdn: str, layer3domain: Optional[str] = None, view: Optional[str] = None, _: str = Depends(require_api_auth)):
+    """
+    Resuelve un FQDN y obtiene información del pool/IP asociado.
+
+    - **fqdn**: Nombre DNS completo (ej: host.arsysnet.lan.)
+    - **layer3domain**: (opcional) Forzar búsqueda en un layer3domain específico
+    - **view**: (opcional) Vista DNS (interna/externa)
+    """
+    try:
+        l3d = ensure_l3d(layer3domain)
+        return handle_dns(fqdn.strip(), l3d, view)
+    except NdcliError as e:
+        raise HTTPException(status_code=502, detail=f"DIM error: {e.stderr or str(e)}")
+
+
+@app.get("/api/v1/acs/ip/{ip_address}", response_model=List[ResultItem], tags=["ACS"])
+async def api_v1_acs_ip(ip_address: str, layer3domain: Optional[str] = None, _: str = Depends(require_api_auth)):
+    """
+    Busca información de una IP en dominios ACS.
+
+    - **ip_address**: Dirección IP (ej: 10.140.16.10)
+    - **layer3domain**: (opcional) Forzar búsqueda en un layer3domain específico
+    """
+    try:
+        normalized_ip = _normalize_ip_simple(ip_address.strip())
+        l3d = ensure_l3d(layer3domain)
+        return search_across_domains("ip", normalized_ip, l3d)
+    except NdcliError as e:
+        raise HTTPException(status_code=502, detail=f"DIM error: {e.stderr or str(e)}")
+
+
+@app.get("/api/v1/acs/device/{device_name}", response_model=List[ResultItem], tags=["ACS"])
+async def api_v1_acs_device(device_name: str, _: str = Depends(require_api_auth)):
+    """
+    Búsqueda compleja por nombre de dispositivo (DNS + pools).
+
+    - **device_name**: Nombre del dispositivo (ej: es-glb-ins-ifw01-01)
+    """
+    try:
+        sanitized = device_name.strip()
+        if not FQDN_RE.match(sanitized):
+            raise HTTPException(status_code=400, detail="Nombre de dispositivo inválido")
+        return handle_device(sanitized)
+    except NdcliError as e:
+        raise HTTPException(status_code=502, detail=f"DIM error: {e.stderr or str(e)}")
+
+
+# --- IONOS Endpoints ---
+
+@app.get("/api/v1/ionos/subnet/{cidr:path}", response_model=List[ResultItem], tags=["IONOS"])
+async def api_v1_ionos_subnet(cidr: str, layer3domain: Optional[str] = None, _: str = Depends(require_api_auth)):
+    """
+    Busca información de una subred en dominios IONOS (excluye pools ACS).
+
+    - **cidr**: CIDR completo (192.168.1.0/24) o parcial (192.168.1)
+    - **layer3domain**: (opcional) Forzar búsqueda en un layer3domain específico (no ACS)
+    """
+    try:
+        l3d = ensure_l3d(layer3domain)
+        return handle_subnet_ionos(cidr.strip(), l3d)
+    except NdcliError as e:
+        raise HTTPException(status_code=502, detail=f"DIM error: {e.stderr or str(e)}")
+
+
+@app.get("/api/v1/ionos/ip/{ip_address}", response_model=List[ResultItem], tags=["IONOS"])
+async def api_v1_ionos_ip(ip_address: str, layer3domain: Optional[str] = None, _: str = Depends(require_api_auth)):
+    """
+    Busca información de una IP en dominios IONOS (excluye pools ACS).
+
+    - **ip_address**: Dirección IP (ej: 10.140.16.10)
+    - **layer3domain**: (opcional) Forzar búsqueda en un layer3domain específico (no ACS)
+    """
+    try:
+        normalized_ip = _normalize_ip_simple(ip_address.strip())
+        l3d = ensure_l3d(layer3domain)
+        return handle_ip_ionos(normalized_ip, l3d)
+    except NdcliError as e:
+        raise HTTPException(status_code=502, detail=f"DIM error: {e.stderr or str(e)}")
+
+
+# --- Endpoint de documentación API ---
+
+@app.get("/api/v1/docs", tags=["Documentation"])
+async def api_v1_documentation():
+    """
+    Devuelve documentación completa de la API v1.
+    """
+    return {
+        "version": "1.0",
+        "description": "Portal DIM API para consultas de red",
+        "authentication": {
+            "methods": [
+                {
+                    "type": "api_key",
+                    "header": "X-API-Key",
+                    "description": "Genera una API key desde la interfaz web o POST /api/v1/apikeys/generate"
+                },
+                {
+                    "type": "session",
+                    "description": "Cookie de sesión tras login en /api/auth/login"
+                }
+            ]
+        },
+        "endpoints": {
+            "acs": {
+                "description": "Consultas en dominios ACS",
+                "endpoints": [
+                    {"method": "GET", "path": "/api/v1/acs/pool/{pool_name}", "description": "Buscar pool por nombre"},
+                    {"method": "GET", "path": "/api/v1/acs/subnet/{cidr}", "description": "Buscar subred por CIDR"},
+                    {"method": "GET", "path": "/api/v1/acs/vlan/{vlan_id}", "description": "Buscar pools por VLAN"},
+                    {"method": "GET", "path": "/api/v1/acs/dns/{fqdn}", "description": "Resolver FQDN a pool/IP"},
+                    {"method": "GET", "path": "/api/v1/acs/ip/{ip_address}", "description": "Buscar información de IP"},
+                    {"method": "GET", "path": "/api/v1/acs/device/{device_name}", "description": "Buscar por dispositivo"},
+                ]
+            },
+            "ionos": {
+                "description": "Consultas en dominios IONOS (excluye ACS)",
+                "endpoints": [
+                    {"method": "GET", "path": "/api/v1/ionos/subnet/{cidr}", "description": "Buscar subred por CIDR"},
+                    {"method": "GET", "path": "/api/v1/ionos/ip/{ip_address}", "description": "Buscar información de IP"},
+                ]
+            },
+            "api_keys": {
+                "description": "Gestión de API keys",
+                "endpoints": [
+                    {"method": "POST", "path": "/api/v1/apikeys/generate", "description": "Generar nueva API key"},
+                    {"method": "GET", "path": "/api/v1/apikeys", "description": "Listar API keys del usuario"},
+                    {"method": "DELETE", "path": "/api/v1/apikeys/{key_prefix}", "description": "Revocar API key"},
+                ]
+            }
+        },
+        "examples": {
+            "curl_with_api_key": 'curl -H "X-API-Key: dim_xxx..." https://host/api/v1/acs/ip/10.140.16.10',
+            "curl_with_session": 'curl -b "dim_session=xxx" https://host/api/v1/acs/subnet/192.168.1.0/24',
+        }
+    }
+
+
 # Servir frontend estático
 static_dir = os.path.join(os.path.dirname(__file__), "..", "frontend", "dist")
 if os.path.isdir(static_dir):

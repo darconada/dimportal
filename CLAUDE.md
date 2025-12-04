@@ -32,11 +32,12 @@ React Frontend (:5173) → FastAPI Backend (:4500) → ndcli subprocess → NetD
 ```
 
 ### Frontend (`frontend/src/`)
-- **App.jsx** (3300+ lines): Monolithic component handling 4 tabs:
+- **App.jsx** (3500+ lines): Monolithic component handling 5 tabs:
   - Consultas ACS: Search pools/subnets/VLANs/DNS/IPs in ACS domains
   - Consultas IONOS: Search subnets/IPs in non-ACS domains
   - Gestión DNS: Create/delete DNS records
   - Importación IPs: CSV-based batch IP import workflow
+  - API: Documentation and API key management
 - **api.js**: Fetch-based API client with session cookie handling
 - **components/ResultsTable.jsx**: Reusable results display
 
@@ -75,13 +76,37 @@ FERNET_KEY=<optional, auto-generated>
 
 **Import logs**: Written to `backend/logs/import-YYYY-MM-DD.log`
 
-## API Endpoints (key ones)
+## API Endpoints
 
+### Legacy endpoints (used by web UI)
 - `POST /api/auth/login|logout`, `GET /api/auth/session`
 - `GET /api/search` - Main search (type: subnet/pool/vlan/ip/device/dns)
 - `POST /api/ip/reserve|release|edit`
 - `POST /api/dns/check|create|delete`
 - `POST /api/import/ip-info|dryrun|execute`
+
+### API v1 - RESTful endpoints for programmatic access
+
+**Authentication**: API Key (header `X-API-Key`) or session cookie
+
+**API Key management**:
+- `POST /api/v1/apikeys/generate` - Generate new API key
+- `GET /api/v1/apikeys` - List user's API keys
+- `DELETE /api/v1/apikeys/{key_prefix}` - Revoke API key
+
+**ACS queries**:
+- `GET /api/v1/acs/pool/{pool_name}` - Search pool by name
+- `GET /api/v1/acs/subnet/{cidr}` - Search subnet by CIDR
+- `GET /api/v1/acs/vlan/{vlan_id}` - Search pools by VLAN
+- `GET /api/v1/acs/dns/{fqdn}` - Resolve FQDN to pool/IP
+- `GET /api/v1/acs/ip/{ip_address}` - Search IP information
+- `GET /api/v1/acs/device/{device_name}` - Search by device
+
+**IONOS queries** (excludes ACS pools):
+- `GET /api/v1/ionos/subnet/{cidr}` - Search subnet by CIDR
+- `GET /api/v1/ionos/ip/{ip_address}` - Search IP information
+
+All endpoints accept optional `layer3domain` query param to force specific domain.
 
 ## Adding Features
 

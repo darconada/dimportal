@@ -141,3 +141,23 @@ export async function importDryrun(payload) {
 export async function importExecute(payload) {
   return postJson('/api/import/execute', payload, 'No se pudo ejecutar la importación')
 }
+
+// API Keys management
+export async function generateApiKey(name) {
+  return postJson('/api/v1/apikeys/generate', { name: name || undefined }, 'No se pudo generar la API key')
+}
+
+export async function listApiKeys() {
+  const r = await fetch('/api/v1/apikeys', { credentials: 'include' })
+  if (!r.ok) throw new Error('No se pudieron obtener las API keys')
+  return await r.json()
+}
+
+export async function revokeApiKey(keyPrefix) {
+  const r = await fetch(`/api/v1/apikeys/${encodeURIComponent(keyPrefix)}`, {
+    method: 'DELETE',
+    credentials: 'include'
+  })
+  if (!r.ok) throw new Error('No se pudo revocar la API key')
+  return await r.json()
+}

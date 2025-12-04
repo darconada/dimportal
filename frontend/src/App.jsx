@@ -15,14 +15,18 @@ import {
   fetchDnsView,
   importIpInfo,
   importDryrun,
-  importExecute
+  importExecute,
+  generateApiKey,
+  listApiKeys,
+  revokeApiKey
 } from './api.js'
 
 const TABS = [
   { key: 'consultas-acs', label: 'Consultas ACS' },
   { key: 'consultas-ionos', label: 'Consultas IONOS' },
   { key: 'gestion-dns', label: 'Gestión DNS' },
-  { key: 'importacion-ips', label: 'Importación IPs' }
+  { key: 'importacion-ips', label: 'Importación IPs' },
+  { key: 'ayuda-api', label: 'API' }
 ]
 
 const SEARCH_TYPES_ACS = [
@@ -274,6 +278,16 @@ export default function App() {
   const [dnsCreateDryrunOpen, setDnsCreateDryrunOpen] = useState(false)
   const [dnsCreateDryrunLoading, setDnsCreateDryrunLoading] = useState(false)
   const [dnsCreateDryrunResults, setDnsCreateDryrunResults] = useState([])
+
+  // API Keys state
+  const [apiKeys, setApiKeys] = useState([])
+  const [apiKeysLoading, setApiKeysLoading] = useState(false)
+  const [apiKeysError, setApiKeysError] = useState('')
+  const [newApiKey, setNewApiKey] = useState('')
+  const [generatingKey, setGeneratingKey] = useState(false)
+  const [apiKeyModalOpen, setApiKeyModalOpen] = useState(false)
+  const [apiKeyCopied, setApiKeyCopied] = useState(false)
+  const [apiKeyName, setApiKeyName] = useState('')
 
   const palette = theme === 'dark' ? paletteDark : paletteLight
 
@@ -690,6 +704,70 @@ export default function App() {
     setDnsCreateDryrunOpen(false)
     setDnsCreateDryrunResults([])
   }, [dnsSectionAction])
+
+  // Cargar API keys cuando se entra al tab de ayuda
+  useEffect(() => {
+    if (activeTab !== 'ayuda-api') return
+    setApiKeysLoading(true)
+    setApiKeysError('')
+    setNewApiKey('')
+    listApiKeys()
+      .then((data) => setApiKeys(data.keys || []))
+      .catch((err) => setApiKeysError(err.message))
+      .finally(() => setApiKeysLoading(false))
+  }, [activeTab])
+
+  const handleGenerateApiKey = async () => {
+    setGeneratingKey(true)
+    setApiKeysError('')
+    setApiKeyCopied(false)
+    try {
+      const result = await generateApiKey(apiKeyName.trim() || undefined)
+      setNewApiKey(result.api_key)
+      setApiKeyModalOpen(true)
+      setApiKeyName('')
+      // Recargar lista
+      const data = await listApiKeys()
+      setApiKeys(data.keys || [])
+    } catch (err) {
+      setApiKeysError(err.message)
+    } finally {
+      setGeneratingKey(false)
+    }
+  }
+
+  const handleCopyApiKey = async () => {
+    try {
+      await navigator.clipboard.writeText(newApiKey)
+      setApiKeyCopied(true)
+    } catch (err) {
+      // Fallback para navegadores sin clipboard API
+      const textArea = document.createElement('textarea')
+      textArea.value = newApiKey
+      document.body.appendChild(textArea)
+      textArea.select()
+      document.execCommand('copy')
+      document.body.removeChild(textArea)
+      setApiKeyCopied(true)
+    }
+  }
+
+  const handleCloseApiKeyModal = () => {
+    setApiKeyModalOpen(false)
+    setNewApiKey('')
+    setApiKeyCopied(false)
+  }
+
+  const handleRevokeApiKey = async (keyPrefix) => {
+    if (!confirm('¿Seguro que quieres revocar esta API key?')) return
+    try {
+      await revokeApiKey(keyPrefix)
+      const data = await listApiKeys()
+      setApiKeys(data.keys || [])
+    } catch (err) {
+      setApiKeysError(err.message)
+    }
+  }
 
   const subnetFilteredRows = useMemo(() => {
     if (!subnetSearch.trim()) return subnetDisplayedRows
@@ -1685,6 +1763,270 @@ export default function App() {
             ) : (
               <div style={{ color: palette.muted }}>Esta opción se habilitará en los siguientes pasos.</div>
             )}
+          </div>
+        ) : activeTab === 'ayuda-api' ? (
+          <div
+            style={{
+              background: palette.card,
+              border: `1px solid ${palette.border}`,
+              borderRadius: 10,
+              padding: '20px 24px'
+            }}
+          >
+            <h2 style={{ margin: '0 0 16px', color: palette.text }}>API de Consultas</h2>
+            <p style={{ color: palette.muted, marginBottom: 24 }}>
+              Portal DIM expone una API REST para realizar consultas de forma programática.
+              Puedes usar esta API desde scripts, automatizaciones o integraciones.
+            </p>
+
+            {/* Sección de API Keys */}
+            <div style={{ marginBottom: 32 }}>
+              <h3 style={{ margin: '0 0 12px', color: palette.text }}>Tus API Keys</h3>
+              <p style={{ color: palette.muted, fontSize: '0.9rem', marginBottom: 16 }}>
+                Las API keys te permiten autenticarte sin necesidad de cookies de sesión.
+                Cada key hereda tus permisos actuales.
+              </p>
+
+              {apiKeysError && (
+                <div style={{ color: palette.danger, marginBottom: 12 }}>{apiKeysError}</div>
+              )}
+
+              <div
+                style={{
+                  background: palette.tableHeader,
+                  border: `2px solid ${palette.primary}`,
+                  borderRadius: 10,
+                  padding: 16,
+                  marginBottom: 20
+                }}
+              >
+                <div style={{ marginBottom: 12 }}>
+                  <label style={{ display: 'block', color: palette.text, marginBottom: 8, fontWeight: 600 }}>
+                    Nombre para la API Key (opcional)
+                  </label>
+                  <input
+                    type="text"
+                    value={apiKeyName}
+                    onChange={(e) => setApiKeyName(e.target.value)}
+                    placeholder="Ej: Script backup, Integracion Jenkins, Usuario Juan..."
+                    style={{
+                      width: '100%',
+                      padding: '12px 14px',
+                      borderRadius: 8,
+                      border: `2px solid ${palette.border}`,
+                      background: palette.card,
+                      color: palette.text,
+                      fontSize: '1rem'
+                    }}
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={handleGenerateApiKey}
+                  disabled={generatingKey}
+                  style={{
+                    padding: '12px 20px',
+                    borderRadius: 8,
+                    border: 'none',
+                    background: generatingKey ? palette.border : palette.primary,
+                    color: '#fff',
+                    fontWeight: 700,
+                    fontSize: '1rem',
+                    cursor: generatingKey ? 'not-allowed' : 'pointer'
+                  }}
+                >
+                  {generatingKey ? 'Generando...' : 'Generar nueva API Key'}
+                </button>
+              </div>
+
+              {apiKeysLoading ? (
+                <div style={{ color: palette.muted }}>Cargando API keys...</div>
+              ) : apiKeys.length === 0 ? (
+                <div style={{ color: palette.muted }}>No tienes API keys activas.</div>
+              ) : (
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead>
+                    <tr style={{ background: palette.tableHeader }}>
+                      <th style={{ padding: '10px 12px', textAlign: 'left', color: palette.text }}>Nombre</th>
+                      <th style={{ padding: '10px 12px', textAlign: 'left', color: palette.text }}>Key (prefijo)</th>
+                      <th style={{ padding: '10px 12px', textAlign: 'left', color: palette.text }}>Creada</th>
+                      <th style={{ padding: '10px 12px', textAlign: 'center', color: palette.text }}>Acciones</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {apiKeys.map((k, i) => (
+                      <tr key={i} style={{ borderBottom: `1px solid ${palette.border}` }}>
+                        <td style={{ padding: '10px 12px', color: palette.text }}>
+                          {k.name || <span style={{ color: palette.muted, fontStyle: 'italic' }}>Sin nombre</span>}
+                        </td>
+                        <td style={{ padding: '10px 12px', color: palette.text, fontFamily: 'monospace' }}>
+                          {k.key_prefix}
+                        </td>
+                        <td style={{ padding: '10px 12px', color: palette.muted }}>
+                          {k.created ? new Date(k.created).toLocaleString() : '-'}
+                        </td>
+                        <td style={{ padding: '10px 12px', textAlign: 'center' }}>
+                          <button
+                            type="button"
+                            onClick={() => handleRevokeApiKey(k.key_prefix.replace('...', ''))}
+                            style={{
+                              padding: '6px 12px',
+                              borderRadius: 6,
+                              border: `1px solid ${palette.danger}`,
+                              background: 'transparent',
+                              color: palette.danger,
+                              fontWeight: 600,
+                              cursor: 'pointer',
+                              fontSize: '0.85rem'
+                            }}
+                          >
+                            Revocar
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+
+            {/* Documentación de endpoints */}
+            <div style={{ marginBottom: 32 }}>
+              <h3 style={{ margin: '0 0 12px', color: palette.text }}>Endpoints Disponibles</h3>
+
+              <h4 style={{ margin: '16px 0 8px', color: palette.primary }}>Consultas ACS</h4>
+              <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: 16 }}>
+                <thead>
+                  <tr style={{ background: palette.tableHeader }}>
+                    <th style={{ padding: '8px 12px', textAlign: 'left', color: palette.text }}>Endpoint</th>
+                    <th style={{ padding: '8px 12px', textAlign: 'left', color: palette.text }}>Descripcion</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {[
+                    { path: '/api/v1/acs/pool/{pool_name}', desc: 'Buscar pool por nombre' },
+                    { path: '/api/v1/acs/subnet/{cidr}', desc: 'Buscar subred por CIDR' },
+                    { path: '/api/v1/acs/vlan/{vlan_id}', desc: 'Buscar pools por VLAN' },
+                    { path: '/api/v1/acs/dns/{fqdn}', desc: 'Resolver FQDN a pool/IP' },
+                    { path: '/api/v1/acs/ip/{ip_address}', desc: 'Buscar informacion de IP' },
+                    { path: '/api/v1/acs/device/{device_name}', desc: 'Buscar por dispositivo' }
+                  ].map((ep, i) => (
+                    <tr key={i} style={{ borderBottom: `1px solid ${palette.border}` }}>
+                      <td style={{ padding: '8px 12px', fontFamily: 'monospace', fontSize: '0.85rem', color: palette.text }}>
+                        GET {ep.path}
+                      </td>
+                      <td style={{ padding: '8px 12px', color: palette.muted }}>{ep.desc}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+
+              <h4 style={{ margin: '16px 0 8px', color: palette.primary }}>Consultas IONOS</h4>
+              <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: 16 }}>
+                <thead>
+                  <tr style={{ background: palette.tableHeader }}>
+                    <th style={{ padding: '8px 12px', textAlign: 'left', color: palette.text }}>Endpoint</th>
+                    <th style={{ padding: '8px 12px', textAlign: 'left', color: palette.text }}>Descripcion</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {[
+                    { path: '/api/v1/ionos/subnet/{cidr}', desc: 'Buscar subred por CIDR (excluye ACS)' },
+                    { path: '/api/v1/ionos/ip/{ip_address}', desc: 'Buscar informacion de IP (excluye ACS)' }
+                  ].map((ep, i) => (
+                    <tr key={i} style={{ borderBottom: `1px solid ${palette.border}` }}>
+                      <td style={{ padding: '8px 12px', fontFamily: 'monospace', fontSize: '0.85rem', color: palette.text }}>
+                        GET {ep.path}
+                      </td>
+                      <td style={{ padding: '8px 12px', color: palette.muted }}>{ep.desc}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Ejemplos de uso */}
+            <div>
+              <h3 style={{ margin: '0 0 12px', color: palette.text }}>Ejemplos de Uso</h3>
+
+              <h4 style={{ margin: '16px 0 8px', color: palette.muted }}>Con API Key (recomendado para scripts)</h4>
+              <pre
+                style={{
+                  background: palette.tableRow,
+                  padding: '14px 16px',
+                  borderRadius: 8,
+                  overflow: 'auto',
+                  fontSize: '0.85rem',
+                  color: palette.text,
+                  border: `1px solid ${palette.border}`
+                }}
+              >
+{`# Buscar informacion de una IP
+curl -H "X-API-Key: dim_tu_api_key_aqui" \\
+     "https://HOST/api/v1/acs/ip/10.140.16.10"
+
+# Buscar subred
+curl -H "X-API-Key: dim_tu_api_key_aqui" \\
+     "https://HOST/api/v1/acs/subnet/192.168.1.0/24"
+
+# Buscar por VLAN
+curl -H "X-API-Key: dim_tu_api_key_aqui" \\
+     "https://HOST/api/v1/acs/vlan/623"
+
+# Buscar pool
+curl -H "X-API-Key: dim_tu_api_key_aqui" \\
+     "https://HOST/api/v1/acs/pool/es-lgr-pl-acs-core-v4"`}
+              </pre>
+
+              <h4 style={{ margin: '24px 0 8px', color: palette.muted }}>Respuesta de ejemplo</h4>
+              <pre
+                style={{
+                  background: palette.tableRow,
+                  padding: '14px 16px',
+                  borderRadius: 8,
+                  overflow: 'auto',
+                  fontSize: '0.85rem',
+                  color: palette.text,
+                  border: `1px solid ${palette.border}`
+                }}
+              >
+{`[
+  {
+    "pool": "es-lgr-pl-acs-core-v4",
+    "vlan": "623",
+    "layer3domain": "8560-arsys-acs-lgr",
+    "subnets": ["192.168.1.0/24", "192.168.2.0/24"],
+    "dns_zones": ["arsysnet.lan."],
+    "ptr_zones": ["1.168.192.in-addr.arpa."],
+    "gateway": "192.168.1.1",
+    "ip": "192.168.1.10",
+    "status": "Static",
+    "comment": "servidor-web-01"
+  }
+]`}
+              </pre>
+
+              <h4 style={{ margin: '24px 0 8px', color: palette.muted }}>Parametros opcionales</h4>
+              <p style={{ color: palette.muted, fontSize: '0.9rem' }}>
+                Todos los endpoints aceptan el parametro opcional <code style={{ background: palette.tableRow, padding: '2px 6px', borderRadius: 4 }}>layer3domain</code> para
+                forzar la busqueda en un dominio especifico:
+              </p>
+              <pre
+                style={{
+                  background: palette.tableRow,
+                  padding: '14px 16px',
+                  borderRadius: 8,
+                  overflow: 'auto',
+                  fontSize: '0.85rem',
+                  color: palette.text,
+                  border: `1px solid ${palette.border}`,
+                  marginTop: 8
+                }}
+              >
+{`curl -H "X-API-Key: dim_xxx" \\
+     "https://HOST/api/v1/acs/ip/10.140.16.10?layer3domain=8560-arsys-acs-lgr"`}
+              </pre>
+            </div>
           </div>
         ) : activeTab !== 'importacion-ips' ? (
           <>
@@ -3304,6 +3646,96 @@ export default function App() {
             >
               Aceptar
             </button>
+          </div>
+        </div>
+      ) : null}
+
+      {/* Modal para mostrar nueva API Key */}
+      {apiKeyModalOpen ? (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0,0,0,0.6)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '1.5rem',
+            zIndex: 3000
+          }}
+        >
+          <div
+            style={{
+              background: palette.card,
+              color: palette.text,
+              border: `1px solid ${palette.border}`,
+              borderRadius: 14,
+              padding: '2rem',
+              width: 'min(720px, 95%)',
+              boxShadow: '0 24px 64px rgba(0,0,0,0.5)'
+            }}
+          >
+            <h3 style={{ marginTop: 0, marginBottom: 12, color: palette.success }}>
+              API Key generada correctamente
+            </h3>
+            <p style={{ color: palette.muted, marginBottom: 16 }}>
+              Copia esta clave ahora. Por seguridad, no se mostrara de nuevo.
+            </p>
+            <div
+              style={{
+                background: palette.tableRow,
+                border: `1px solid ${palette.border}`,
+                borderRadius: 8,
+                padding: '14px 16px',
+                marginBottom: 20
+              }}
+            >
+              <code
+                style={{
+                  display: 'block',
+                  fontSize: '0.95rem',
+                  color: palette.text,
+                  marginBottom: 12,
+                  letterSpacing: '0.3px'
+                }}
+              >
+                {newApiKey}
+              </code>
+              <button
+                type="button"
+                onClick={handleCopyApiKey}
+                style={{
+                  padding: '10px 20px',
+                  borderRadius: 6,
+                  border: 'none',
+                  background: apiKeyCopied ? palette.success : palette.primary,
+                  color: '#fff',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  minWidth: 120
+                }}
+              >
+                {apiKeyCopied ? 'Copiado!' : 'Copiar al portapapeles'}
+              </button>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+              <button
+                type="button"
+                onClick={handleCloseApiKeyModal}
+                style={{
+                  padding: '12px 24px',
+                  borderRadius: 8,
+                  border: 'none',
+                  background: palette.primary,
+                  color: '#fff',
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                  boxShadow: '0 4px 10px rgba(0,0,0,0.3)'
+                }}
+              >
+                Cerrar
+              </button>
+            </div>
           </div>
         </div>
       ) : null}

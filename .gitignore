@@ -11,6 +11,7 @@ frontend/dist/
 # Environment
 .env
 backend/.env
+backend/api_keys.json
 
 # Logs
 logs/
